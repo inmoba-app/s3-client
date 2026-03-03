@@ -90,6 +90,9 @@ def normalize_record(data: dict[str, Any]) -> dict[str, Any]:
     """
     result = data.copy()
 
+    if "busqueda_id" in result and result["busqueda_id"] is not None:
+        result["busqueda_id"] = str(result["busqueda_id"])
+
     # Serialize raw_response if it's a dict, otherwise keep as string or default to "{}"
     if "raw_response" in result:
         raw = result["raw_response"]
