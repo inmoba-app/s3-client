@@ -78,6 +78,22 @@ class S3Store:
             ExpiresIn=expiry_seconds,
         )
 
+    def presigned_put_url(
+        self,
+        key: str,
+        expiry_seconds: int = 86400,
+        content_type: str | None = None,
+    ) -> str:
+        """Generate a presigned PUT URL for uploading an object."""
+        params: dict = {"Bucket": self._bucket, "Key": key}
+        if content_type is not None:
+            params["ContentType"] = content_type
+        return self._client.generate_presigned_url(
+            "put_object",
+            Params=params,
+            ExpiresIn=expiry_seconds,
+        )
+
     def list_keys(self, prefix: Optional[str] = None) -> list[str]:
         """List all keys under optional prefix. Handles pagination."""
         keys: list[str] = []

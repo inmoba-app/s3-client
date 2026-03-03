@@ -21,9 +21,14 @@ class PartidaStore(S3Store):
         region: str | None = None,
         access_key_id: str | None = None,
         secret_access_key: str | None = None,
+        athena_output_location: str = "s3://inmoba-sunarp-vispartida/athena-results/",
+        athena_database: str = "inmoba_sunarp",
     ) -> None:
         super().__init__(bucket, region, access_key_id, secret_access_key)
         self._index: pa.Table | None = None
+        self.athena_output_location = athena_output_location
+        self.athena_database = athena_database
+        self._athena_client = None
 
     def load_index(self) -> int:
         raw = self.download(CURATED_KEY)
@@ -106,3 +111,18 @@ class PartidaStore(S3Store):
     def partida_exists(self, partida: str) -> bool:
         """Return True if BOTH metadata and document exist for partida."""
         return self.metadata_exists(partida) and self.document_exists(partida)
+
+    def get_output_put_url(self, key: str, expiry_seconds: int = 86400) -> str:
+        """Generate a presigned PUT URL for JSON output at the given key."""
+        return self.presigned_put_url(key, expiry_seconds=expiry_seconds, content_type="application/json")
+
+    def query_athena(self, sql: str, timeout: float = 300.0) -> list[dict]:
+        """Execute SQL via Athena. Lazily initializes AthenaClient on first call."""
+        if self._athena_client is None:
+            from inmoba_s3.athena import AthenaClient
+            self._athena_client = AthenaClient(
+                region=self._region,
+                output_location=self.athena_output_location,
+                database=self.athena_database,
+            )
+        return self._athena_client.query(sql, timeout=timeout)
