@@ -6,15 +6,18 @@ import io
 import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import boto3
+from botocore.config import Config
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from inmoba_s3.schema import PARTIDA_SCHEMA, normalize_record
 
 
 CURATED_KEY = "curated/partidas.parquet"
+MAX_WORKERS = 100
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -54,29 +57,53 @@ def list_partida_prefixes(s3_client, bucket: str) -> list[str]:
     return prefixes
 
 
+def _fetch_metadata(s3_client, bucket: str, partida: str) -> tuple[str, dict[str, Any] | None, Exception | None]:
+    try:
+        response = s3_client.get_object(Bucket=bucket, Key=f"{partida}/metadata.json")
+        raw = json.loads(response["Body"].read().decode("utf-8"))
+        record = normalize_record(raw)
+        record["partida_registral"] = partida
+        return partida, record, None
+    except Exception as exc:
+        return partida, None, exc
+
+
 def migrate_metadata(
     s3_client, bucket: str, partidas: list[str], args
 ) -> tuple[list[dict[str, object]], list[str]]:
     records: list[dict[str, object]] = []
     failures: list[str] = []
-    for i, partida in enumerate(partidas):
-        if i > 0 and i % 1000 == 0:
-            print(f"  Processed {i}/{len(partidas)} partidas...")
-        try:
-            response = s3_client.get_object(
-                Bucket=bucket, Key=f"{partida}/metadata.json"
-            )
-            raw = json.loads(response["Body"].read().decode("utf-8"))
-            record = normalize_record(raw)
-            record["partida_registral"] = partida
-            records.append(record)
-        except Exception as exc:
-            print(
-                f"  WARN: Failed to process metadata for {partida}: {exc}",
-                file=sys.stderr,
-            )
-            failures.append(partida)
+    
+    print(f"  Fetching metadata with {MAX_WORKERS} concurrent workers...")
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {
+            executor.submit(_fetch_metadata, s3_client, bucket, p): p for p in partidas
+        }
+        for i, future in enumerate(as_completed(futures)):
+            if i > 0 and i % 1000 == 0:
+                print(f"  Processed {i}/{len(partidas)} metadata files...")
+            partida, record, exc = future.result()
+            if exc:
+                print(f"  WARN: Failed metadata for {partida}: {exc}", file=sys.stderr)
+                failures.append(partida)
+            elif record:
+                records.append(record)
+                
     return records, failures
+
+
+def _copy_pdf(s3_client, bucket: str, partida: str) -> tuple[str, bool, Exception | None]:
+    old_key = f"{partida}/partida_{partida}.pdf"
+    new_key = f"documents/partida_{partida}.pdf"
+    try:
+        s3_client.copy_object(
+            Bucket=bucket,
+            CopySource={"Bucket": bucket, "Key": old_key},
+            Key=new_key,
+        )
+        return partida, True, None
+    except Exception as exc:
+        return partida, False, exc
 
 
 def migrate_pdfs(
@@ -84,19 +111,22 @@ def migrate_pdfs(
 ) -> tuple[int, list[str]]:
     copied = 0
     failures: list[str] = []
-    for partida in partidas:
-        old_key = f"{partida}/partida_{partida}.pdf"
-        new_key = f"documents/partida_{partida}.pdf"
-        try:
-            s3_client.copy_object(
-                Bucket=bucket,
-                CopySource={"Bucket": bucket, "Key": old_key},
-                Key=new_key,
-            )
-            copied += 1
-        except Exception as exc:
-            print(f"  WARN: Failed to copy PDF for {partida}: {exc}", file=sys.stderr)
-            failures.append(partida)
+    
+    print(f"  Copying PDFs with {MAX_WORKERS} concurrent workers...")
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {
+            executor.submit(_copy_pdf, s3_client, bucket, p): p for p in partidas
+        }
+        for i, future in enumerate(as_completed(futures)):
+            if i > 0 and i % 1000 == 0:
+                print(f"  Processed {i}/{len(partidas)} PDFs...")
+            partida, success, exc = future.result()
+            if exc:
+                print(f"  WARN: Failed PDF for {partida}: {exc}", file=sys.stderr)
+                failures.append(partida)
+            elif success:
+                copied += 1
+                
     return copied, failures
 
 
@@ -139,11 +169,14 @@ def main(args=None) -> None:
     if args is None:
         args = parse_args()
 
+    # Increase max pool connections so threads aren't bottlenecked by boto3 HTTP connection pool
+    boto_config = Config(max_pool_connections=MAX_WORKERS)
+
     if args.profile:
         session = boto3.Session(profile_name=args.profile)
-        s3 = session.client("s3", region_name=args.region)
+        s3 = session.client("s3", region_name=args.region, config=boto_config)
     else:
-        s3 = boto3.client("s3", region_name=args.region)
+        s3 = boto3.client("s3", region_name=args.region, config=boto_config)
 
     print(f"Migration starting: bucket={args.bucket}, dry_run={args.dry_run}")
 
@@ -161,7 +194,6 @@ def main(args=None) -> None:
 
     table = build_parquet_table(records)
     print(f"Parquet table: {table.num_rows} rows")
-    print(f"Schema:\n{table.schema}")
 
     if args.dry_run:
         output_path = os.path.join(args.output_dir, "partidas.parquet")
@@ -190,12 +222,6 @@ def main(args=None) -> None:
 
     total_failures = len(meta_failures) + len(pdf_failures)
     print(f"\nMigration complete. Total failures: {total_failures}")
-    if meta_failures:
-        suffix = "..." if len(meta_failures) > 10 else ""
-        print(f"Failed metadata (first 10): {meta_failures[:10]}{suffix}")
-    if pdf_failures:
-        suffix = "..." if len(pdf_failures) > 10 else ""
-        print(f"Failed PDFs (first 10): {pdf_failures[:10]}{suffix}")
 
 
 if __name__ == "__main__":
