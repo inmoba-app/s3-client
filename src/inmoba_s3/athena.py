@@ -27,6 +27,7 @@ class AthenaClient:
         database: str = "inmoba_sunarp",
         access_key_id: str | None = None,
         secret_access_key: str | None = None,
+        session_token: str | None = None,
     ) -> None:
         """Initialize Athena client.
 
@@ -36,11 +37,14 @@ class AthenaClient:
             database: Default Athena database name
             access_key_id: Optional AWS access key (uses env/instance profile if None)
             secret_access_key: Optional AWS secret key
+            session_token: Optional AWS session token (required for STS temporary credentials)
         """
         kwargs: dict = {"region_name": region}
         if access_key_id and secret_access_key:
             kwargs["aws_access_key_id"] = access_key_id
             kwargs["aws_secret_access_key"] = secret_access_key
+            if session_token:
+                kwargs["aws_session_token"] = session_token
         self._client = boto3.client("athena", **kwargs)
         self._output_location = output_location
         self._database = database

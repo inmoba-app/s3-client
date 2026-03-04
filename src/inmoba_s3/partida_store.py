@@ -21,14 +21,16 @@ class PartidaStore(S3Store):
         region: str | None = None,
         access_key_id: str | None = None,
         secret_access_key: str | None = None,
+        session_token: str | None = None,
         athena_output_location: str = "s3://inmoba-sunarp-vispartida/athena-results/",
         athena_database: str = "inmoba_sunarp",
     ) -> None:
-        super().__init__(bucket, region, access_key_id, secret_access_key)
+        super().__init__(bucket, region, access_key_id, secret_access_key, session_token)
         self._index: pa.Table | None = None
         self.athena_output_location = athena_output_location
         self.athena_database = athena_database
         self._athena_client = None
+        self._session_token = session_token
 
     def load_index(self) -> int:
         raw = self.download(CURATED_KEY)
@@ -124,5 +126,6 @@ class PartidaStore(S3Store):
                 region=self._region,
                 output_location=self.athena_output_location,
                 database=self.athena_database,
+                session_token=self._session_token,
             )
         return self._athena_client.query(sql, timeout=timeout)

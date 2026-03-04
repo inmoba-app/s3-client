@@ -18,6 +18,7 @@ class S3Store:
         region: Optional[str] = None,
         access_key_id: Optional[str] = None,
         secret_access_key: Optional[str] = None,
+        session_token: Optional[str] = None,
     ) -> None:
         self._bucket = bucket
         self._region = region
@@ -26,6 +27,7 @@ class S3Store:
             region_name=region,
             aws_access_key_id=access_key_id,
             aws_secret_access_key=secret_access_key,
+            aws_session_token=session_token,
         )
 
     def upload(
