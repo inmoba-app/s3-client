@@ -12,6 +12,7 @@ from inmoba_s3.store import S3Store
 
 CURATED_KEY = "curated/partidas.parquet"
 DOCUMENTS_PREFIX = "documents/"
+LINKED_PREFIX = "linked/"
 
 
 class PartidaStore(S3Store):
@@ -26,7 +27,14 @@ class PartidaStore(S3Store):
         athena_output_location: str = "s3://inmoba-sunarp-vispartida/athena-results/",
         athena_database: str = "inmoba_sunarp",
     ) -> None:
-        super().__init__(bucket, region, access_key_id, secret_access_key, session_token, profile_name)
+        super().__init__(
+            bucket,
+            region,
+            access_key_id,
+            secret_access_key,
+            session_token,
+            profile_name,
+        )
         self._index: pa.Table | None = None
         self.athena_output_location = athena_output_location
         self.athena_database = athena_database
@@ -106,7 +114,9 @@ class PartidaStore(S3Store):
     def get_document_url(self, partida: str, expiry_seconds: int = 604800) -> str:
         """Return presigned GET URL for partida's PDF."""
         key = self._document_key(partida)
-        return self.presigned_url(key, expiry_seconds=expiry_seconds, response_content_type="application/pdf")
+        return self.presigned_url(
+            key, expiry_seconds=expiry_seconds, response_content_type="application/pdf"
+        )
 
     def document_exists(self, partida: str) -> bool:
         """Return True if PDF document for partida exists in S3."""
@@ -118,12 +128,21 @@ class PartidaStore(S3Store):
 
     def get_output_put_url(self, key: str, expiry_seconds: int = 86400) -> str:
         """Generate a presigned PUT URL for JSON output at the given key."""
-        return self.presigned_put_url(key, expiry_seconds=expiry_seconds, content_type="application/json")
+        return self.presigned_put_url(
+            key, expiry_seconds=expiry_seconds, content_type="application/json"
+        )
+
+    def linked_output_key(self, partida: str) -> str:
+        return f"{LINKED_PREFIX}linked_ocr_{partida}.json"
+
+    def has_recent_linked_output(self, partida: str, ttl_seconds: int) -> bool:
+        return self.exists_within_ttl(self.linked_output_key(partida), ttl_seconds)
 
     def query_athena(self, sql: str, timeout: float = 300.0) -> list[dict]:
         """Execute SQL via Athena. Lazily initializes AthenaClient on first call."""
         if self._athena_client is None:
             from inmoba_s3.athena import AthenaClient
+
             self._athena_client = AthenaClient(
                 region=self._region,
                 output_location=self.athena_output_location,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import boto3
@@ -70,6 +71,27 @@ class S3Store:
             if e.response["Error"]["Code"] in ("NoSuchKey", "404", "403"):
                 return False
             raise
+
+    def object_last_modified(self, key: str) -> datetime | None:
+        try:
+            response = self._client.head_object(Bucket=self._bucket, Key=key)
+            value = response.get("LastModified")
+            if not isinstance(value, datetime):
+                return None
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
+            return value
+        except ClientError as e:
+            if e.response["Error"]["Code"] in ("NoSuchKey", "404", "403"):
+                return None
+            raise
+
+    def exists_within_ttl(self, key: str, ttl_seconds: int) -> bool:
+        last_modified = self.object_last_modified(key)
+        if last_modified is None:
+            return False
+        ttl = timedelta(seconds=ttl_seconds)
+        return datetime.now(timezone.utc) - last_modified <= ttl
 
     def presigned_url(
         self,
