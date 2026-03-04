@@ -19,16 +19,23 @@ class S3Store:
         access_key_id: Optional[str] = None,
         secret_access_key: Optional[str] = None,
         session_token: Optional[str] = None,
+        profile_name: Optional[str] = None,
     ) -> None:
         self._bucket = bucket
         self._region = region
-        self._client = boto3.client(
-            "s3",
-            region_name=region,
-            aws_access_key_id=access_key_id,
-            aws_secret_access_key=secret_access_key,
-            aws_session_token=session_token,
-        )
+        kwargs: dict = {}
+        if region:
+            kwargs["region_name"] = region
+        if access_key_id and secret_access_key:
+            kwargs["aws_access_key_id"] = access_key_id
+            kwargs["aws_secret_access_key"] = secret_access_key
+            if session_token:
+                kwargs["aws_session_token"] = session_token
+        if profile_name:
+            session = boto3.Session(profile_name=profile_name)
+            self._client = session.client("s3", **kwargs)
+        else:
+            self._client = boto3.client("s3", **kwargs)
 
     def upload(
         self, data: bytes, key: str, content_type: str = "application/octet-stream"

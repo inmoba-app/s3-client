@@ -28,6 +28,7 @@ class AthenaClient:
         access_key_id: str | None = None,
         secret_access_key: str | None = None,
         session_token: str | None = None,
+        profile_name: str | None = None,
     ) -> None:
         """Initialize Athena client.
 
@@ -38,6 +39,7 @@ class AthenaClient:
             access_key_id: Optional AWS access key (uses env/instance profile if None)
             secret_access_key: Optional AWS secret key
             session_token: Optional AWS session token (required for STS temporary credentials)
+            profile_name: Optional AWS profile name (e.g. 'developer-leonardo-candio')
         """
         kwargs: dict = {"region_name": region}
         if access_key_id and secret_access_key:
@@ -45,7 +47,11 @@ class AthenaClient:
             kwargs["aws_secret_access_key"] = secret_access_key
             if session_token:
                 kwargs["aws_session_token"] = session_token
-        self._client = boto3.client("athena", **kwargs)
+        if profile_name:
+            session = boto3.Session(profile_name=profile_name)
+            self._client = session.client("athena", **kwargs)
+        else:
+            self._client = boto3.client("athena", **kwargs)
         self._output_location = output_location
         self._database = database
         self._region = region
