@@ -12,7 +12,6 @@ from inmoba_s3.store import S3Store
 
 CURATED_KEY = "curated/partidas.parquet"
 DOCUMENTS_PREFIX = "documents/"
-LINKED_PREFIX = "linked/"
 
 
 class PartidaStore(S3Store):
@@ -132,11 +131,23 @@ class PartidaStore(S3Store):
             key, expiry_seconds=expiry_seconds, content_type="application/json"
         )
 
+    def output_key(self, prefix: str, partida: str) -> str:
+        """Return S3 key for partida's OCR output under the given prefix."""
+        return f"{prefix}/{prefix}_ocr_{partida}.json"
+
+    def has_recent_output(self, prefix: str, partida: str, ttl_seconds: int = 31536000) -> bool:
+        """Return True if OCR output for partida exists within ttl_seconds."""
+        return self.exists_within_ttl(self.output_key(prefix, partida), ttl_seconds)
+
+    def get_output_put_url_for(self, prefix: str, partida: str, expiry: int = 86400) -> str:
+        """Generate a presigned PUT URL for partida's OCR output under prefix."""
+        return self.presigned_put_url(self.output_key(prefix, partida), expiry_seconds=expiry, content_type="application/json")
+
     def linked_output_key(self, partida: str) -> str:
-        return f"{LINKED_PREFIX}linked_ocr_{partida}.json"
+        return self.output_key("linked", partida)
 
     def has_recent_linked_output(self, partida: str, ttl_seconds: int) -> bool:
-        return self.exists_within_ttl(self.linked_output_key(partida), ttl_seconds)
+        return self.has_recent_output("linked", partida, ttl_seconds)
 
     def query_athena(self, sql: str, timeout: float = 300.0) -> list[dict]:
         """Execute SQL via Athena. Lazily initializes AthenaClient on first call."""
